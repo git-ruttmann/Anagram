@@ -1,0 +1,8 @@
+.vs
+*/obj
+*/bin
+packages
+Debug
+Bin
+*Tests/coverage.json
+*Tests/coverage.opencover.xml
