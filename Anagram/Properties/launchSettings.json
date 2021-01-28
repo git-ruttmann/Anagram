@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Anagram": {
+      "commandName": "Project",
+      "commandLineArgs": "C:\\Users\\Ruttmann\\source\\repos\\Anagram\\wordlist.txt \"IT-Crowd\""
+    }
+  }
+}
