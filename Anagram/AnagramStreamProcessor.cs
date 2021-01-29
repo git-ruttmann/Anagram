@@ -4,6 +4,7 @@
     using System.Collections.Generic;
     using System.Linq;
     using System.Reactive.Subjects;
+    using System.Threading.Tasks;
 
     /// <summary>
     /// Finds find anagrams in streamed words
@@ -11,6 +12,11 @@
     internal class AnagramStreamProcessor : ITestableAnagramStream
     {
         private readonly int minWordSize;
+
+        /// <summary>
+        /// The active generation, compared to <see cref="TextSegment.TestGeneration"/>
+        /// </summary>
+        private int activeTestGeneration;
 
         /// <summary>
         /// registered segments that match the anagram
@@ -23,17 +29,29 @@
         private readonly Dictionary<char, int> anagramCharacterCounts;
 
         /// <summary>
-        /// subject for output
+        /// The segments awaiting registration (deferred because of parallel processing)
         /// </summary>
-        private Subject<IEnumerable<string>> outputSubject;
+        private readonly List<TextSegment> segmentsToRegister;
+
+        /// <summary>
+        /// subject for registration
+        /// </summary>
+        private Subject<IEnumerable<string>> subsribeSubject;
+
+        /// <summary>
+        /// the thread synchronous output subject
+        /// </summary>
+        ISubject<IEnumerable<string>> synchronizedOutputSubject;
 
         /// <summary>
         /// private constructor to avoid public create
         /// </summary>
         public AnagramStreamProcessor(string source, int minWordSize)
         {
-            this.outputSubject = new Subject<IEnumerable<string>>();
+            this.subsribeSubject = new Subject<IEnumerable<string>>();
+            this.synchronizedOutputSubject = Subject.Synchronize(subsribeSubject);
             this.minWordSize = minWordSize;
+            this.segmentsToRegister = new List<TextSegment>();
             this.segmentRegistration = new Dictionary<char, List<TextSegment>>();
             this.anagramCharacterCounts = new Dictionary<char, int>();
             foreach (var c in source.ToLowerInvariant().Where(x => Char.IsLetterOrDigit(x)))
@@ -51,7 +69,7 @@
         }
 
         /// <inheritdoc/>
-        public IObservable<IEnumerable<string>> Results => this.outputSubject;
+        public IObservable<IEnumerable<string>> Results => this.subsribeSubject;
 
         /// <inheritdoc/>
         public int SingleWordSegmentCount { get; private set; }
@@ -75,7 +93,7 @@
 
             if (segment.RemainingCharacterClasses == 0)
             {
-                this.outputSubject.OnNext(segment.Words);
+                this.synchronizedOutputSubject.OnNext(segment.Words);
                 return;
             }
 
@@ -87,17 +105,14 @@
             var potentialCompletions = segment
                 .RemainingChars
                 .Keys
-                .SelectMany(x => this.segmentRegistration[x])
-                .Distinct()
-                .ToList();
+                .SelectMany(x => this.segmentRegistration[x]);
+
+            this.activeTestGeneration++;
+            Parallel.ForEach(potentialCompletions, x => this.HandlePossibleCompletion(word, segment, x));
 
             this.RegisterSegment(segment);
             this.SingleWordSegmentCount++;
-
-            foreach (var completion in potentialCompletions)
-            {
-                HandlePossibleCompletion(word, segment, completion);
-            }
+            this.DoSegmentRegistration();
         }
 
         /// <inheritdoc/>
@@ -114,11 +129,21 @@
         /// <param name="completion">a possible registered completion</param>
         private void HandlePossibleCompletion(string word, TextSegment segment, TextSegment completion)
         {
+            lock(completion)
+            {
+                if (completion.TestGeneration == this.activeTestGeneration)
+                {
+                    return;
+                }
+
+                completion.TestGeneration = this.activeTestGeneration;
+            }
+
             if (completion.RemainingLength == word.Length)
             {
                 if (TextSegment.IsFullCompletion(completion, segment))
                 {
-                    this.outputSubject.OnNext(completion.Words.Concat(segment.Words));
+                    this.synchronizedOutputSubject.OnNext(completion.Words.Concat(segment.Words));
                 }
             }
             else if (completion.UsedChars.Count > 0 && completion.RemainingLength - word.Length > minWordSize)
@@ -137,20 +162,40 @@
         }
 
         /// <summary>
-        /// Register a new segment
+        /// Register a new segment. (actually it's deferred)
         /// </summary>
         /// <param name="segment">the new segment</param>
         private void RegisterSegment(TextSegment segment)
         {
-            foreach (var kvp in segment.UsedChars.Where(x => x.Value > 0))
+            lock(this.segmentsToRegister)
             {
-                if (!segmentRegistration.TryGetValue(kvp.Key, out var listForChar))
+                this.segmentsToRegister.Add(segment);
+            }
+        }
+
+        /// <summary>
+        /// Register all deferred segments
+        /// </summary>
+        private void DoSegmentRegistration()
+        {
+            lock (this.segmentsToRegister)
+            {
+                foreach (var segment in this.segmentsToRegister)
                 {
-                    listForChar = new List<TextSegment>();
-                    segmentRegistration.Add(kvp.Key, listForChar);
+                    foreach (var kvp in segment.UsedChars.Where(x => x.Value > 0))
+                    {
+                        if (!segmentRegistration.TryGetValue(kvp.Key, out var listForChar))
+                        {
+                            listForChar = new List<TextSegment>();
+                            segmentRegistration.Add(kvp.Key, listForChar);
+                        }
+
+                        segment.TestGeneration = this.activeTestGeneration;
+                        listForChar.Add(segment);
+                    }
                 }
 
-                listForChar.Add(segment);
+                this.segmentsToRegister.Clear();
             }
         }
     }

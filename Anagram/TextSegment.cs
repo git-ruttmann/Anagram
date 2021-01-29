@@ -70,6 +70,11 @@
         public IEnumerable<string> Words { get; }
 
         /// <summary>
+        /// The last test generation, this item was checked
+        /// </summary>
+        public int TestGeneration { get; set; }
+
+        /// <summary>
         /// Joins two text segments and their count
         /// </summary>
         /// <param name="first">the first text segment</param>
