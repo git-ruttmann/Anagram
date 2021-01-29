@@ -78,6 +78,9 @@
         public int SegmentCombinationCount { get; private set; }
 
         /// <inheritdoc/>
+        public IEnumerable<IEnumerable<TextSegment>> SegmentsPerCharacter => this.segmentRegistration.Values;
+
+        /// <inheritdoc/>
         public void ProcessWord(string word)
         {
             if (word.Length <= minWordSize)
@@ -152,7 +155,6 @@
                 if (joinedWord.RemainingCharacterClasses > 0)
                 {
                     this.RegisterSegment(joinedWord);
-                    this.SegmentCombinationCount++;
                 }
             }
             else
@@ -170,6 +172,7 @@
             lock(this.segmentsToRegister)
             {
                 this.segmentsToRegister.Add(segment);
+                this.SegmentCombinationCount++;
             }
         }
 

@@ -3,6 +3,7 @@
     using System;
     using System.IO;
     using System.Globalization;
+    using System.Linq;
 
     class Program
     {
@@ -14,9 +15,9 @@
             var path = args[0];
             var now = DateTime.Now;
 
-            var stream = AanagramStreamFactory.CreateAnagramStream(anagramText);
+            var stream = AanagramStreamFactory.CreateTestableAnagramStream(anagramText);
 
-            using (stream.Results.Subscribe(x => Console.WriteLine(string.Join(" ", x))))
+            using (stream.Results.Subscribe(x => Console.WriteLine(string.Join(" ", x) + " " + $"{stream.SingleWordSegmentCount} {stream.SegmentCombinationCount}")))
             {
                 foreach (var word in File.ReadAllLines(path))
                 {
@@ -25,6 +26,10 @@
             }
 
             var duration = DateTime.Now - now;
+
+            Console.WriteLine($"{stream.SingleWordSegmentCount} {stream.SegmentCombinationCount}");
+            Console.WriteLine($"{string.Join(" ", stream.SegmentsPerCharacter.Select(x => x.Count()))} Total: {stream.SegmentsPerCharacter.Aggregate(0, (i, x) => i + x.Count())}");
+
             Console.WriteLine($"Execution time: { duration.TotalSeconds:0.###} seconds");
         }
     }
