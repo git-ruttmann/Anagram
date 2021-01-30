@@ -106,7 +106,7 @@
             }
 
             var potentialCompletions = segment
-                .RemainingChars
+                .UsedChars
                 .Keys
                 .SelectMany(x => this.segmentRegistration[x]);
 
@@ -185,7 +185,7 @@
             {
                 foreach (var segment in this.segmentsToRegister)
                 {
-                    foreach (var kvp in segment.UsedChars.Where(x => x.Value > 0))
+                    foreach (var kvp in segment.RemainingChars)
                     {
                         if (!segmentRegistration.TryGetValue(kvp.Key, out var listForChar))
                         {
