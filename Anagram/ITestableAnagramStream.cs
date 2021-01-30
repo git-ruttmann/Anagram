@@ -20,11 +20,19 @@
         /// <summary>
         /// Create a word with character count characteristics
         /// </summary>
-        TextSegment CreatePartialWord(string text);
+        TextSegment CreateTextSegment(string text);
 
         /// <summary>
         /// Gets the list of possible text segments per character
         /// </summary>
         IEnumerable<IEnumerable<TextSegment>> SegmentsPerCharacter { get; }
+
+        /// <summary>
+        /// Join an existing text segment with a new text
+        /// </summary>
+        /// <param name="first">the existing text segment</param>
+        /// <param name="text">the new text</param>
+        /// <returns>a joined text segment</returns>
+        TextSegment JoinTextAndSegment(TextSegment first, string text);
     }
 }

@@ -3,6 +3,7 @@
     using Microsoft.VisualStudio.TestTools.UnitTesting;
 
     using Anagram;
+    using System.Collections.Generic;
 
     [TestClass]
     public class WordAnalysisTests
@@ -14,14 +15,14 @@
         public void ValidWordAnalysis()
         {
             var stream = AanagramStreamFactory.CreateTestableAnagramStream("BestSecret");
-            var word = stream.CreatePartialWord("eeEtt");
+            var word = stream.CreateTextSegment("eeEtt");
 
-            Assert.AreEqual(4, word.RemainingCharacterClasses);
+            Assert.AreEqual(4, word.RemainingCharacterClassCount);
             Assert.AreEqual(5, word.RemainingLength);
-            Assert.AreEqual(1, word.RemainingChars['b']);
-            Assert.AreEqual(2, word.RemainingChars['s']);
-            Assert.AreEqual(1, word.RemainingChars['c']);
-            Assert.AreEqual(1, word.RemainingChars['r']);
+            Assert.AreEqual(1, word.RemainingCharacters['b']);
+            Assert.AreEqual(2, word.RemainingCharacters['s']);
+            Assert.AreEqual(1, word.RemainingCharacters['c']);
+            Assert.AreEqual(1, word.RemainingCharacters['r']);
         }
 
         /// <summary>
@@ -31,9 +32,9 @@
         public void InvalidWordAnalysisBadChar()
         {
             var stream = AanagramStreamFactory.CreateTestableAnagramStream("BestSecret");
-            var word = stream.CreatePartialWord("eeEttx");
+            var word = stream.CreateTextSegment("eeEttx");
 
-            Assert.AreEqual(-1, word.RemainingCharacterClasses);
+            Assert.AreEqual(-1, word.RemainingCharacterClassCount);
             Assert.AreEqual(-1, word.RemainingLength);
         }
 
@@ -44,9 +45,9 @@
         public void InvalidWordAnalysisBadOccurences()
         {
             var stream = AanagramStreamFactory.CreateTestableAnagramStream("BestSecret");
-            var word = stream.CreatePartialWord("eeEttt");
+            var word = stream.CreateTextSegment("eeEttt");
 
-            Assert.AreEqual(-1, word.RemainingCharacterClasses);
+            Assert.AreEqual(-1, word.RemainingCharacterClassCount);
             Assert.AreEqual(-1, word.RemainingLength);
         }
 
@@ -54,30 +55,28 @@
         public void ValidWordJoin()
         {
             var stream = AanagramStreamFactory.CreateTestableAnagramStream("BestSecret");
-            var word1 = stream.CreatePartialWord("eet");
-            var word2 = stream.CreatePartialWord("bet");
+            var word1 = stream.CreateTextSegment("eet");
 
             // "sscr" is missing
-            var joined = TextSegment.Join(word1, word2);
+            var joined = stream.JoinTextAndSegment(word1, "bet");
 
-            Assert.AreEqual(3, joined.RemainingCharacterClasses);
+            Assert.AreEqual(3, joined.RemainingCharacterClassCount);
             Assert.AreEqual(4, joined.RemainingLength);
-            Assert.AreEqual(2, joined.RemainingChars['s']);
-            Assert.AreEqual(1, joined.RemainingChars['c']);
-            Assert.AreEqual(1, joined.RemainingChars['r']);
+            Assert.AreEqual(2, joined.RemainingCharacters['s']);
+            Assert.AreEqual(1, joined.RemainingCharacters['c']);
+            Assert.AreEqual(1, joined.RemainingCharacters['r']);
         }
 
         [TestMethod]
         public void BadJoinWithCharactersAlreadyFullyUsed()
         {
             var stream = AanagramStreamFactory.CreateTestableAnagramStream("BestSecret");
-            var word1 = stream.CreatePartialWord("eeet");
-            var word2 = stream.CreatePartialWord("bet");
+            var word1 = stream.CreateTextSegment("eeet");
 
             // "sscr" is missing
-            var joined = TextSegment.Join(word1, word2);
+            var joined = stream.JoinTextAndSegment(word1, "bet");
 
-            Assert.AreEqual(-1, joined.RemainingCharacterClasses);
+            Assert.AreEqual(-1, joined.RemainingCharacterClassCount);
             Assert.AreEqual(-1, joined.RemainingLength);
         }
 
@@ -85,13 +84,12 @@
         public void BadJoinWithCharactersOveruse()
         {
             var stream = AanagramStreamFactory.CreateTestableAnagramStream("BestSecret");
-            var word1 = stream.CreatePartialWord("eet");
-            var word2 = stream.CreatePartialWord("beet");
+            var word1 = stream.CreateTextSegment("eet");
 
             // "sscr" is missing
-            var joined = TextSegment.Join(word1, word2);
+            var joined = stream.JoinTextAndSegment(word1, "beet");
 
-            Assert.AreEqual(-1, joined.RemainingCharacterClasses);
+            Assert.AreEqual(-1, joined.RemainingCharacterClassCount);
             Assert.AreEqual(-1, joined.RemainingLength);
         }
     }

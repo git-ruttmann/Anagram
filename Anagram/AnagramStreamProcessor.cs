@@ -2,6 +2,7 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Collections.ObjectModel;
     using System.Linq;
     using System.Reactive.Subjects;
     using System.Threading.Tasks;
@@ -14,11 +15,6 @@
         private readonly int minWordSize;
 
         /// <summary>
-        /// The active generation, compared to <see cref="TextSegment.TestGeneration"/>
-        /// </summary>
-        private int activeTestGeneration;
-
-        /// <summary>
         /// registered segments that match the anagram
         /// </summary>
         private readonly Dictionary<char, List<TextSegment>> segmentRegistration;
@@ -26,7 +22,7 @@
         /// <summary>
         /// the used characters and their count in the anagram source
         /// </summary>
-        private readonly Dictionary<char, int> anagramCharacterCounts;
+        private readonly ReadOnlyDictionary<char, int> anagramCharacterCounts;
 
         /// <summary>
         /// The segments awaiting registration (deferred because of parallel processing)
@@ -36,12 +32,22 @@
         /// <summary>
         /// subject for registration
         /// </summary>
-        private Subject<IEnumerable<string>> subsribeSubject;
+        private readonly Subject<IEnumerable<string>> subsribeSubject;
 
         /// <summary>
         /// the thread synchronous output subject
         /// </summary>
-        ISubject<IEnumerable<string>> synchronizedOutputSubject;
+        private readonly ISubject<IEnumerable<string>> synchronizedOutputSubject;
+
+        /// <summary>
+        /// The active generation, compared to <see cref="TextSegment.TestGeneration"/>
+        /// </summary>
+        private int activeTestGeneration;
+
+        /// <summary>
+        /// The characters of the active processed word
+        /// </summary>
+        private IReadOnlyDictionary<char, int> activeChars;
 
         /// <summary>
         /// private constructor to avoid public create
@@ -53,19 +59,7 @@
             this.minWordSize = minWordSize;
             this.segmentsToRegister = new List<TextSegment>();
             this.segmentRegistration = new Dictionary<char, List<TextSegment>>();
-            this.anagramCharacterCounts = new Dictionary<char, int>();
-            foreach (var c in source.ToLowerInvariant().Where(x => Char.IsLetterOrDigit(x)))
-            {
-                if (anagramCharacterCounts.ContainsKey(c))
-                {
-                    anagramCharacterCounts[c]++;
-                }
-                else
-                {
-                    anagramCharacterCounts.Add(c, 1);
-                    segmentRegistration.Add(c, new List<TextSegment>());
-                }
-            }
+            this.anagramCharacterCounts = this.CountCharactersInAnagram(source);
         }
 
         /// <inheritdoc/>
@@ -88,13 +82,13 @@
                 return;
             }
 
-            var segment = new TextSegment(this.anagramCharacterCounts, word);
-            if (segment.RemainingCharacterClasses < 0)
+            if (!this.CountCharacters(word, out var remainingCharacters, out this.activeChars))
             {
                 return;
             }
 
-            if (segment.RemainingCharacterClasses == 0)
+            var segment = new TextSegment(remainingCharacters, word);
+            if (segment.RemainingCharacterClassCount == 0)
             {
                 this.synchronizedOutputSubject.OnNext(segment.Words);
                 return;
@@ -105,32 +99,115 @@
                 return;
             }
 
-            var potentialCompletions = segment
-                .UsedChars
-                .Keys
-                .SelectMany(x => this.segmentRegistration[x]);
-
+            var potentialCompletions = this.activeChars.Keys.SelectMany(x => this.segmentRegistration[x]);
             this.activeTestGeneration++;
-            Parallel.ForEach(potentialCompletions, x => this.HandlePossibleCompletion(word, segment, x));
+            Parallel.ForEach(potentialCompletions, x => this.HandlePossibleCompletion(word, x));
 
-            this.RegisterSegment(segment);
+            this.AddSegmentForRegistration(segment);
             this.SingleWordSegmentCount++;
             this.DoSegmentRegistration();
         }
 
         /// <inheritdoc/>
-        public TextSegment CreatePartialWord(string text)
+        public TextSegment CreateTextSegment(string text)
         {
-            return new TextSegment(this.anagramCharacterCounts, text);
+            if (!this.CountCharacters(text, out var remainingCharacters, out this.activeChars))
+            {
+                return TextSegment.InvalidSegment;
+            }
+
+            return new TextSegment(remainingCharacters, text);
+        }
+
+        /// <inheritdoc/>
+        public TextSegment JoinTextAndSegment(TextSegment first, string text)
+        {
+            if (!this.CountCharacters(text, out var _, out this.activeChars))
+            {
+                return TextSegment.InvalidSegment;
+            }
+
+            return this.Join(first, text);
+        }
+
+        /// <summary>
+        /// Joins two text segments and their count
+        /// </summary>
+        /// <param name="first">the first text segment</param>
+        /// <param name="text">the text of the second segment</param>
+        /// <returns>The combined text segment. May be invalid.</returns>
+        private TextSegment Join(TextSegment first, string text)
+        {
+            var remainingCharacters = new Dictionary<char, int>(first.RemainingCharacters);
+            foreach (var kvp in this.activeChars)
+            {
+                if (!remainingCharacters.TryGetValue(kvp.Key, out var oldCount))
+                {
+                    return TextSegment.InvalidSegment;
+                }
+
+                if (oldCount == kvp.Value)
+                {
+                    remainingCharacters.Remove(kvp.Key);
+                }
+                else if (oldCount < kvp.Value)
+                {
+                    return TextSegment.InvalidSegment;
+                }
+                else
+                {
+                    remainingCharacters[kvp.Key] -= kvp.Value;
+                }
+            }
+
+            return new TextSegment(remainingCharacters, first.Words.Append(text));
+        }
+
+        /// <summary>
+        /// Count the used characters and count down the remaining characters of the anagram
+        /// </summary>
+        /// <param name="text">the text to analyze</param>
+        /// <param name="remaining">the remaining characters to complete the anagram.</param>
+        /// <param name="usedCharacters">the used characters.</param>
+        /// <returns>true if the remaining chars have a valid state</returns>
+        private bool CountCharacters(string text, out Dictionary<char, int> remaining, out IReadOnlyDictionary<char, int> usedCharacters)
+        {
+            var used = new Dictionary<char, int>();
+            usedCharacters = used;
+            remaining = new Dictionary<char, int>(this.anagramCharacterCounts);
+            foreach (var c in text.ToLowerInvariant())
+            {
+                if (!remaining.TryGetValue(c, out var oldCount))
+                {
+                    return false;
+                }
+
+                if (oldCount == 1)
+                {
+                    remaining.Remove(c);
+                }
+                else
+                {
+                    remaining[c] -= 1;
+                }
+
+                if (!used.TryGetValue(c, out var usedCount))
+                {
+                    usedCount = 0;
+                }
+
+                used[c] = usedCount + 1;
+            }
+
+            return true;
         }
 
         /// <summary>
         /// test combinations of registered segments (and their combinations). auto registers new segments
         /// </summary>
         /// <param name="word">the current processed word</param>
-        /// <param name="segment">the segment that describes the actual word</param>
         /// <param name="completion">a possible registered completion</param>
-        private void HandlePossibleCompletion(string word, TextSegment segment, TextSegment completion)
+        private void HandlePossibleCompletion(string word, TextSegment completion)
         {
             lock(completion)
             {
@@ -144,17 +221,17 @@
 
             if (completion.RemainingLength == word.Length)
             {
-                if (TextSegment.IsFullCompletion(completion, segment))
+                if (TextSegment.IsFullCompletion(completion, this.activeChars))
                 {
-                    this.synchronizedOutputSubject.OnNext(completion.Words.Concat(segment.Words));
+                    this.synchronizedOutputSubject.OnNext(completion.Words.Append(word));
                 }
             }
-            else if (completion.UsedChars.Count > 0 && completion.RemainingLength - word.Length > minWordSize)
+            else if (completion.RemainingLength - word.Length > minWordSize)
             {
-                var joinedWord = TextSegment.Join(completion, segment);
-                if (joinedWord.RemainingCharacterClasses > 0)
+                var joinedWord = this.Join(completion, word);
+                if (joinedWord.RemainingCharacterClassCount > 0)
                 {
-                    this.RegisterSegment(joinedWord);
+                    this.AddSegmentForRegistration(joinedWord);
                 }
             }
             else
@@ -164,10 +241,34 @@
         }
 
         /// <summary>
+        /// Count the characters in the anagram. Drop invalid characters.
+        /// </summary>
+        /// <param name="text">the anagram text</param>
+        /// <returns>A dictionary with used characters and their count</returns>
+        private ReadOnlyDictionary<char, int> CountCharactersInAnagram(string text)
+        {
+            var usedChars = new Dictionary<char, int>();
+            foreach (var c in text.ToLowerInvariant().Where(x => Char.IsLetterOrDigit(x)))
+            {
+                if (usedChars.ContainsKey(c))
+                {
+                    usedChars[c]++;
+                }
+                else
+                {
+                    usedChars.Add(c, 1);
+                    segmentRegistration.Add(c, new List<TextSegment>());
+                }
+            }
+
+            return new ReadOnlyDictionary<char, int>(usedChars);
+        }
+
+        /// <summary>
         /// Register a new segment. (actually it's deferred)
         /// </summary>
         /// <param name="segment">the new segment</param>
-        private void RegisterSegment(TextSegment segment)
+        private void AddSegmentForRegistration(TextSegment segment)
         {
             lock(this.segmentsToRegister)
             {
@@ -185,7 +286,7 @@
             {
                 foreach (var segment in this.segmentsToRegister)
                 {
-                    foreach (var kvp in segment.RemainingChars)
+                    foreach (var kvp in segment.RemainingCharacters)
                     {
                         if (!segmentRegistration.TryGetValue(kvp.Key, out var listForChar))
                         {
